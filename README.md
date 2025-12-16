@@ -281,6 +281,15 @@ const { send: sendB, receive: receiveB } = createChannel('namespaceB')
 
 Just ensure that the namespace IDs match on both sides.
 
+## To-do
+
+You are welcome to contribute! Some potential improvements and features to consider:
+
+- Refactor to avoid using `MessageChannel` to support React Native
+- Stable object references across messages (via `WeakMap`)
+- Include function reference clean-up information (via `WeakRef`) in the protocol to avoid memory leaks
+- Benchmarking and performance optimizations
+
 ## Acknowledgements
 
 This library is a recreation of RSC (React Server Components)'s serialization mechanism and React Server Actions reference passing idea.
