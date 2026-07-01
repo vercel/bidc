@@ -335,22 +335,34 @@ type TChannel = {
  */
 function createChannel(): TChannel
 function createChannel(targetOrChannelId: MessageTarget | string): TChannel
+function createChannel(channelId: string, origin: string): TChannel
 function createChannel(maybeTarget: MessageTarget, channelId: string): TChannel
 function createChannel(
+  maybeTarget: MessageTarget,
+  channelId: string,
+  origin: string
+): TChannel
+function createChannel(
   targetOrChannelId?: MessageTarget | string,
-  channelId?: string
+  channelIdOrOrigin?: string,
+  maybeOrigin?: string
 ) {
   let maybeTarget: MessageTarget | undefined = undefined
-  if (
-    typeof channelId === 'undefined' &&
-    typeof targetOrChannelId === 'string'
-  ) {
-    // The first argument is channelId
-    channelId = targetOrChannelId
-    maybeTarget = undefined
-  } else if (typeof targetOrChannelId === 'object') {
-    // The first argument is a target
+  let channelId: string | undefined
+  // Expected origin of the other endpoint. When set, incoming connections
+  // from any other origin are rejected. Must be declared by the caller since
+  // it can't be derived from a cross-origin target.
+  let expectedOrigin: string | undefined
+
+  if (typeof targetOrChannelId === 'object') {
+    // (target, channelId?, origin?)
     maybeTarget = targetOrChannelId
+    channelId = channelIdOrOrigin
+    expectedOrigin = maybeOrigin
+  } else {
+    // (channelId?, origin?) — no target, uses window.parent / self
+    channelId = targetOrChannelId
+    expectedOrigin = channelIdOrOrigin
   }
 
   // Namespaced channelId to avoid conflicts with other libraries / multiple
@@ -375,8 +387,8 @@ function createChannel(
     function sendMessageWithTransfer(message: any, transfer: MessagePort) {
       if (maybeTarget) {
         if ('self' in maybeTarget && maybeTarget.self === maybeTarget) {
-          // It's an iframe contentWindow
-          maybeTarget.postMessage(message, '*', [transfer])
+          // Restrict delivery to the expected origin when declared
+          maybeTarget.postMessage(message, expectedOrigin || '*', [transfer])
         } else {
           ;(maybeTarget as Exclude<MessageTarget, Window>).postMessage(
             message,
@@ -395,7 +407,7 @@ function createChannel(
           window.parent !== window
         ) {
           // Inside an iframe, we can use window.parent
-          window.parent.postMessage(message, '*', [transfer])
+          window.parent.postMessage(message, expectedOrigin || '*', [transfer])
         } else {
           throw new Error('No target provided and no global context available')
         }
@@ -418,6 +430,9 @@ function createChannel(
     function handleConnect(event: MessageEvent) {
       const port = event.ports[0] as MessagePort | undefined
       if (!port) return
+
+      // Reject connections from any origin other than the expected one
+      if (expectedOrigin && event.origin !== expectedOrigin) return
 
       const data = event.data as typeof connectMessage | typeof confirmMessage
       if (data?.channelId !== channelId) return

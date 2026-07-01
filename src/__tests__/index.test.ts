@@ -454,6 +454,179 @@ describe('createChannel integration tests', () => {
   })
 })
 
+describe('origin validation', () => {
+  function createMockWindowTarget() {
+    const target: any = { self: null as any }
+    target.self = target
+    target.postMessage = vi.fn()
+    return target
+  }
+
+  function mockPort() {
+    return {
+      postMessage: vi.fn(),
+      start: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+  }
+
+  it('should reject connections from an origin other than the declared one', async () => {
+    const mockTarget = createMockWindowTarget()
+    const channel = createChannel(
+      mockTarget,
+      'reject-test',
+      'https://trusted.com'
+    )
+
+    const port = mockPort()
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: 'bidc-connect',
+          channelId: 'bidc_reject-test',
+          timestamp: Date.now() + 1000,
+        },
+        origin: 'https://evil.com',
+        ports: [port] as any,
+      })
+    )
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(port.postMessage).not.toHaveBeenCalled()
+
+    channel.cleanup()
+  })
+
+  it('should accept connections from the declared origin', async () => {
+    const mockTarget = createMockWindowTarget()
+    const channel = createChannel(
+      mockTarget,
+      'accept-test',
+      'https://trusted.com'
+    )
+
+    const port = mockPort()
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: 'bidc-connect',
+          channelId: 'bidc_accept-test',
+          timestamp: Date.now() + 1000,
+        },
+        origin: 'https://trusted.com',
+        ports: [port] as any,
+      })
+    )
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'bidc-confirm' })
+    )
+
+    channel.cleanup()
+  })
+
+  it('should accept any origin when none is declared (back-compat)', async () => {
+    const mockTarget = createMockWindowTarget()
+    const channel = createChannel(mockTarget, 'no-origin-test')
+
+    const port = mockPort()
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: 'bidc-connect',
+          channelId: 'bidc_no-origin-test',
+          timestamp: Date.now() + 1000,
+        },
+        origin: 'https://any-origin.com',
+        ports: [port] as any,
+      })
+    )
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'bidc-confirm' })
+    )
+
+    channel.cleanup()
+  })
+
+  it('should use declared origin as targetOrigin in postMessage', () => {
+    const mockTarget = createMockWindowTarget()
+    const channel = createChannel(
+      mockTarget,
+      'target-origin-test',
+      'https://trusted.com'
+    )
+
+    expect(mockTarget.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'bidc-connect' }),
+      'https://trusted.com',
+      expect.any(Array)
+    )
+
+    channel.cleanup()
+  })
+
+  it('should use * as targetOrigin when no origin is declared', () => {
+    const mockTarget = createMockWindowTarget()
+    const channel = createChannel(mockTarget, 'wildcard-test')
+
+    expect(mockTarget.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'bidc-connect' }),
+      '*',
+      expect.any(Array)
+    )
+
+    channel.cleanup()
+  })
+
+  it('should validate origin without a target (iframe context)', async () => {
+    // Simulate an iframe context where window.parent is the embedding page
+    const fakeParent = { postMessage: vi.fn() }
+    Object.defineProperty(window, 'parent', {
+      value: fakeParent,
+      configurable: true,
+    })
+
+    try {
+      const channel = createChannel('iframe-origin-test', 'https://parent.com')
+
+      // Outbound connect message is restricted to the declared origin
+      expect(fakeParent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'bidc-connect' }),
+        'https://parent.com',
+        expect.any(Array)
+      )
+
+      // Inbound connect from a different origin is rejected
+      const port = mockPort()
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'bidc-connect',
+            channelId: 'bidc_iframe-origin-test',
+            timestamp: Date.now() + 1000,
+          },
+          origin: 'https://evil.com',
+          ports: [port] as any,
+        })
+      )
+
+      await new Promise((r) => setTimeout(r, 50))
+      expect(port.postMessage).not.toHaveBeenCalled()
+
+      channel.cleanup()
+    } finally {
+      Object.defineProperty(window, 'parent', {
+        value: window,
+        configurable: true,
+      })
+    }
+  })
+})
+
 describe('edge cases', () => {
   it('should handle circular references with promises', async () => {
     const obj: any = { name: 'circular' }
